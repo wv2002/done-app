@@ -118,23 +118,23 @@
   .hero-text-sub{font-size:13px;color:var(--text-dim);margin-top:4px;}
 
   .task-card{
-    display:flex;align-items:center;gap:14px;
-    background:var(--surface);border:1px solid var(--border);
-    border-radius:var(--radius-sm);padding:14px;margin-bottom:10px;
+    display:flex;align-items:center;gap:12px;
+    background:var(--surface);border:1.5px solid var(--border);
+    border-radius:12px;padding:9px 10px;margin-bottom:7px;
     transition:.15s;
   }
   .task-check{
-    width:42px;height:42px;border-radius:13px;flex-shrink:0;
+    width:34px;height:34px;border-radius:10px;flex-shrink:0;
     border:2px solid var(--surface3);background:var(--surface2);
     display:flex;align-items:center;justify-content:center;cursor:pointer;
     transition:.15s;
   }
-  .task-check svg{width:20px;height:20px;opacity:0;transition:.15s;stroke:#fff;}
+  .task-check svg{width:16px;height:16px;opacity:0;transition:.15s;stroke:#fff;}
   .task-check.done{border-color:transparent;}
   .task-check.done svg{opacity:1;}
   .task-check:active{transform:scale(.9);}
   .task-info{flex:1;min-width:0;}
-  .task-name{font-weight:600;font-size:15px;margin-bottom:3px;}
+  .task-name{font-weight:600;font-size:14px;}
   .task-meta{font-size:12px;color:var(--text-faint);display:flex;align-items:center;gap:6px;}
   .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
   .goal-pill{
@@ -231,7 +231,7 @@
   .btn-danger-text{background:none;border:none;color:#ef4444;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;padding:8px;}
   .existing-task-row{
     display:flex;align-items:center;gap:12px;padding:12px;
-    background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:9px;
+    background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:9px;
   }
   .existing-task-row .dot{width:11px;height:11px;}
   .existing-task-row .info{flex:1;min-width:0;}
@@ -411,6 +411,17 @@
         </select>
       </div>
     </div>
+    <div class="field">
+      <label>Tipo</label>
+      <select id="task-type-input">
+        <option value="boolean">Sim / não (padrão)</option>
+        <option value="numeric">Numérica (com meta mensurável)</option>
+      </select>
+    </div>
+    <div class="field" id="target-value-field" style="display:none;">
+      <label>Meta numérica (ex: 1000 = mil passos, 30 = 30 minutos)</label>
+      <input type="number" id="task-target-input" min="1" value="1">
+    </div>
     <button class="btn btn-primary" id="save-task-btn" style="margin-bottom:8px;">Adicionar tarefa</button>
     <button class="btn btn-ghost" id="cancel-form-btn" style="display:none;">Cancelar edição</button>
   </div>
@@ -424,7 +435,7 @@ const SUPABASE_URL = 'https://vmwveloxmiwjnuvslhym.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZtd3ZlbG94bWl3am51dnNsaHltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3MDkxMjMsImV4cCI6MjEwNDI4NTEyM30.dj6c7ZD5pnLY2xnll9eKSdOZJXgk9m_S-A6GaLI0qbI';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const COLORS = ['#3b82f6','#60a5fa','#818cf8','#38bdf8','#22d3ee','#a78bfa','#94a3b8','#f472b6'];
+const COLORS = ['#3b82f6','#60a5fa','#38bdf8','#22d3ee','#2dd4bf','#34d399','#a3e635','#fbbf24','#fb923c','#f87171','#f472b6','#e879f9','#a78bfa','#818cf8','#94a3b8'];
 const DOW = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 const DOW_FULL = ['domingo','segunda-feira','terça-feira','quarta-feira','quinta-feira','sexta-feira','sábado'];
 
@@ -502,10 +513,13 @@ async function loadTasks(){
 }
 async function loadEntries(){
   // load everything (personal use scale is small) — simpler + supports full analytics
-  const { data, error } = await sb.from('entries').select('task_id,date,done');
+  const { data, error } = await sb.from('entries').select('task_id,date,done,value');
   if(error){ console.error(error); return; }
   entries = {};
-  (data||[]).forEach(e => { entries[entryKey(e.task_id, e.date)] = e.done; });
+  (data||[]).forEach(e => {
+    entries[entryKey(e.task_id, e.date)] = e.done;
+    if(e.value !== null && e.value !== undefined) entries[entryKey(e.task_id, e.date)+':val'] = e.value;
+  });
 }
 
 async function bootApp(){
@@ -516,26 +530,37 @@ async function bootApp(){
 
 /* ============ PERFORMANCE CALC (weighted + weekly-goal compensation) ============ */
 // Returns {possible, achieved, pct} for one specific date
+function taskFraction(task, dateStr){
+  if(task.type === 'numeric'){
+    const v = entries[entryKey(task.id, dateStr)+':val'] || 0;
+    const target = task.target_value || 1;
+    return Math.max(0, Math.min(1, v/target));
+  }
+  return isEntryDone(task.id, dateStr) ? 1 : 0;
+}
+function taskCompletedForGoal(task, dateStr){
+  return taskFraction(task, dateStr) >= 1;
+}
 function computeDayPerf(dateStr){
   const date = new Date(dateStr+'T00:00:00');
   const weekStart = startOfWeek(date);
   let possible = 0, achieved = 0;
   tasks.forEach(task=>{
-    if(new Date(task.created_at) > date) return; // task didn't exist yet
+    if(task.created_at.slice(0,10) > dateStr) return; // task didn't exist yet
     if(!task.weekly_goal){
       possible += task.weight;
-      if(isEntryDone(task.id, dateStr)) achieved += task.weight;
+      achieved += task.weight * taskFraction(task, dateStr);
     } else {
       // count completions from week start up to (not including) this date
       let priorCount = 0;
       for(let i=0; i<7; i++){
         const d = addDays(weekStart, i);
         if(d >= date) break;
-        if(isEntryDone(task.id, fmtDate(d))) priorCount++;
+        if(taskCompletedForGoal(task, fmtDate(d))) priorCount++;
       }
       if(priorCount >= task.weekly_goal) return; // compensated, doesn't count today
       possible += task.weight;
-      if(isEntryDone(task.id, dateStr)) achieved += task.weight;
+      achieved += task.weight * taskFraction(task, dateStr);
     }
   });
   const pct = possible === 0 ? 100 : Math.round((achieved/possible)*100);
@@ -543,13 +568,13 @@ function computeDayPerf(dateStr){
 }
 
 // weekly completions so far (for pill display)
-function weekCompletionCount(taskId, refDate){
+function weekCompletionCount(task, refDate){
   const weekStart = startOfWeek(refDate);
   let c = 0;
   for(let i=0;i<7;i++){
     const d = addDays(weekStart, i);
     if(d > refDate) break;
-    if(isEntryDone(taskId, fmtDate(d))) c++;
+    if(taskCompletedForGoal(task, fmtDate(d))) c++;
   }
   return c;
 }
@@ -580,20 +605,16 @@ function renderToday(){
   list.innerHTML = tasks.map(task=>{
     const done = isEntryDone(task.id, ts);
     let metaHtml = '';
-    if(task.weekly_goal){
-      const c = weekCompletionCount(task.id, today);
-      const met = c >= task.weekly_goal;
-      metaHtml = `<span class="goal-pill ${met?'met':''}">${c}/${task.weekly_goal} sem.</span>`;
-    } else {
-      metaHtml = `<span class="task-meta-plain" style="color:var(--text-faint);">Todo dia</span>`;
-    }
-    return `<div class="task-card">
-      <div class="task-check ${done?'done':''}" style="background:${done?task.color:''};" data-task="${task.id}" data-date="${ts}">
-        ${checkSvg()}
+    // (frequência ocultada na tela de Hoje a pedido do usuário — visível na edição e no histórico)
+    const isNumeric = task.type === 'numeric';
+    const val = entries[entryKey(task.id, ts)+':val'] || 0;
+    const inner = isNumeric ? `<span style="font-size:12px;font-weight:700;">${val}</span>` : checkSvg();
+    return `<div class="task-card" style="border-color:${task.color}55;">
+      <div class="task-check ${done?'done':''}" style="background:${done?task.color:''};" data-task="${task.id}" data-date="${ts}" data-numeric="${isNumeric?'1':''}">
+        ${inner}
       </div>
       <div class="task-info">
         <div class="task-name">${escapeHtml(task.name)}</div>
-        <div class="task-meta"><span class="dot" style="background:${task.color}"></span>${metaHtml}</div>
       </div>
     </div>`;
   }).join('');
@@ -607,12 +628,29 @@ function escapeHtml(s){ const d=document.createElement('div'); d.textContent=s; 
 
 /* ============ TOGGLE ENTRY ============ */
 async function toggleEntry(taskId, dateStr){
+  const task = tasks.find(t=>t.id===taskId);
+  if(task && task.type === 'numeric'){
+    const key = entryKey(taskId, dateStr);
+    const current = entries[key+':val'] || 0;
+    const input = prompt(`Valor de "${task.name}" (meta: ${task.target_value}):`, current);
+    if(input === null) return;
+    const numVal = parseFloat(input.replace(',','.'));
+    if(isNaN(numVal) || numVal < 0){ showToast('Valor inválido'); return; }
+    const done = numVal >= task.target_value;
+    entries[key] = done; entries[key+':val'] = numVal; // optimistic
+    renderAll();
+    const { error } = await sb.from('entries').upsert({
+      task_id: taskId, date: dateStr, done, value: numVal, user_id: currentUser.id
+    }, { onConflict: 'task_id,date' });
+    if(error){ console.error(error); showToast('Erro ao salvar'); }
+    return;
+  }
   const key = entryKey(taskId, dateStr);
   const newVal = !entries[key];
   entries[key] = newVal; // optimistic
   renderAll();
   const { error } = await sb.from('entries').upsert({
-    task_id: taskId, date: dateStr, done: newVal, user_id: currentUser.id
+    task_id: taskId, date: dateStr, done: newVal, value: null, user_id: currentUser.id
   }, { onConflict: 'task_id,date' });
   if(error){ console.error(error); entries[key] = !newVal; renderAll(); showToast('Erro ao salvar'); }
 }
@@ -645,13 +683,16 @@ function renderHistory(){
   }).join('') + '</tr>';
 
   let rows = tasks.map(task=>{
+    const isNumeric = task.type === 'numeric';
     const cells = days.map(d=>{
       const dateStr = fmtDate(d);
       const future = d > new Date();
       const done = isEntryDone(task.id, dateStr);
-      return `<td class="grid-cell"><div class="grid-check ${done?'done':''} ${future?'future':''}" style="background:${done?task.color:''};" data-task="${task.id}" data-date="${dateStr}">${checkSvg()}</div></td>`;
+      const val = entries[entryKey(task.id, dateStr)+':val'];
+      const inner = isNumeric ? `<span style="font-size:11px;font-weight:700;">${val!==undefined?val:'–'}</span>` : checkSvg();
+      return `<td class="grid-cell"><div class="grid-check ${done?'done':''} ${future?'future':''}" style="background:${done?task.color:''};" data-task="${task.id}" data-date="${dateStr}">${inner}</div></td>`;
     }).join('');
-    return `<tr><td class="col-task"><div class="task-name"><span class="dot" style="background:${task.color}"></span>${escapeHtml(task.name)}</div></td>${cells}</tr>`;
+    return `<tr><td class="col-task" style="border-left:3px solid ${task.color};"><div class="task-name"><span class="dot" style="background:${task.color}"></span>${escapeHtml(task.name)}</div></td>${cells}</tr>`;
   }).join('');
 
   table.innerHTML = head + pctRow + rows;
@@ -720,9 +761,10 @@ function renderAnalytics(){
   const ranked = tasks.map(task=>{
     let total=0, done=0;
     last30.forEach(d=>{
-      if(new Date(task.created_at) > d) return;
+      const ds = fmtDate(d);
+      if(task.created_at.slice(0,10) > ds) return;
       total++;
-      if(isEntryDone(task.id, fmtDate(d))) done++;
+      if(taskCompletedForGoal(task, ds)) done++;
     });
     const pct = total===0? 0 : Math.round((done/total)*100);
     return { task, pct };
@@ -788,14 +830,16 @@ function renderExistingTasksList(){
     list.innerHTML = '<p style="color:var(--text-faint);font-size:13.5px;margin-bottom:6px;">Nenhuma tarefa cadastrada ainda.</p>';
     return;
   }
-  list.innerHTML = tasks.map(t=>`
-    <div class="existing-task-row">
+  list.innerHTML = tasks.map((t,i)=>`
+    <div class="existing-task-row" style="border-color:${t.color}66;">
       <span class="dot" style="background:${t.color}"></span>
       <div class="info">
-        <div class="n">${escapeHtml(t.name)}</div>
+        <div class="n">${escapeHtml(t.name)}${t.type==='numeric' ? ' <span style="color:var(--text-faint);font-weight:500;">(numérica)</span>':''}</div>
         <div class="m">Peso ${t.weight} · ${t.weekly_goal ? t.weekly_goal+'x/semana' : 'todo dia'}</div>
       </div>
       <div class="row-actions">
+        <button data-up="${t.id}" title="Mover para cima" ${i===0?'style="opacity:.3;pointer-events:none;"':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        <button data-down="${t.id}" title="Mover para baixo" ${i===tasks.length-1?'style="opacity:.3;pointer-events:none;"':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>
         <button data-edit="${t.id}" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
         <button data-del="${t.id}" title="Remover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg></button>
       </div>
@@ -803,6 +847,8 @@ function renderExistingTasksList(){
   `).join('');
   list.querySelectorAll('[data-edit]').forEach(b=> b.addEventListener('click', ()=> loadTaskIntoForm(b.dataset.edit)));
   list.querySelectorAll('[data-del]').forEach(b=> b.addEventListener('click', ()=> deleteTask(b.dataset.del)));
+  list.querySelectorAll('[data-up]').forEach(b=> b.addEventListener('click', ()=> moveTask(b.dataset.up, -1)));
+  list.querySelectorAll('[data-down]').forEach(b=> b.addEventListener('click', ()=> moveTask(b.dataset.down, 1)));
 }
 
 function resetForm(){
@@ -811,6 +857,9 @@ function resetForm(){
   document.getElementById('task-name-input').value = '';
   document.getElementById('task-weight-input').value = 1;
   document.getElementById('task-goal-input').value = '';
+  document.getElementById('task-type-input').value = 'boolean';
+  document.getElementById('task-target-input').value = 1;
+  document.getElementById('target-value-field').style.display = 'none';
   selectedColor = COLORS[Math.floor(Math.random()*COLORS.length)];
   buildSwatches();
   document.getElementById('save-task-btn').textContent = 'Adicionar tarefa';
@@ -825,6 +874,9 @@ function loadTaskIntoForm(taskId){
   document.getElementById('task-name-input').value = t.name;
   document.getElementById('task-weight-input').value = t.weight;
   document.getElementById('task-goal-input').value = t.weekly_goal || '';
+  document.getElementById('task-type-input').value = t.type || 'boolean';
+  document.getElementById('task-target-input').value = t.target_value || 1;
+  document.getElementById('target-value-field').style.display = (t.type==='numeric') ? 'block' : 'none';
   selectedColor = t.color;
   buildSwatches();
   document.getElementById('save-task-btn').textContent = 'Salvar alterações';
@@ -832,21 +884,26 @@ function loadTaskIntoForm(taskId){
   document.getElementById('task-name-input').scrollIntoView({behavior:'smooth', block:'center'});
 }
 document.getElementById('cancel-form-btn').addEventListener('click', resetForm);
+document.getElementById('task-type-input').addEventListener('change', (e)=>{
+  document.getElementById('target-value-field').style.display = e.target.value==='numeric' ? 'block' : 'none';
+});
 
 document.getElementById('save-task-btn').addEventListener('click', async ()=>{
   const name = document.getElementById('task-name-input').value.trim();
   const weight = parseInt(document.getElementById('task-weight-input').value) || 1;
   const goalRaw = document.getElementById('task-goal-input').value;
   const weekly_goal = goalRaw ? parseInt(goalRaw) : null;
+  const type = document.getElementById('task-type-input').value;
+  const target_value = type === 'numeric' ? (parseFloat(document.getElementById('task-target-input').value) || 1) : null;
   if(!name){ showToast('Digite um nome para a tarefa'); return; }
 
   if(editingTaskId){
-    const { error } = await sb.from('tasks').update({ name, color: selectedColor, weight, weekly_goal }).eq('id', editingTaskId);
+    const { error } = await sb.from('tasks').update({ name, color: selectedColor, weight, weekly_goal, type, target_value }).eq('id', editingTaskId);
     if(error){ console.error(error); showToast('Erro ao salvar'); return; }
     showToast('Tarefa atualizada');
   } else {
     const { error } = await sb.from('tasks').insert({
-      name, color: selectedColor, weight, weekly_goal, user_id: currentUser.id, sort_order: tasks.length
+      name, color: selectedColor, weight, weekly_goal, type, target_value, user_id: currentUser.id, sort_order: tasks.length
     });
     if(error){ console.error(error); showToast('Erro ao criar'); return; }
     showToast('Tarefa criada');
@@ -856,6 +913,23 @@ document.getElementById('save-task-btn').addEventListener('click', async ()=>{
   resetForm();
   renderAll();
 });
+
+async function moveTask(taskId, dir){
+  const idx = tasks.findIndex(t=>t.id===taskId);
+  const swapIdx = idx + dir;
+  if(swapIdx < 0 || swapIdx >= tasks.length) return;
+  const a = tasks[idx], b = tasks[swapIdx];
+  const aOrder = a.sort_order, bOrder = b.sort_order;
+  [tasks[idx], tasks[swapIdx]] = [tasks[swapIdx], tasks[idx]];
+  renderExistingTasksList();
+  await Promise.all([
+    sb.from('tasks').update({ sort_order: bOrder }).eq('id', a.id),
+    sb.from('tasks').update({ sort_order: aOrder }).eq('id', b.id)
+  ]);
+  await loadTasks();
+  renderExistingTasksList();
+  renderAll();
+}
 
 async function deleteTask(taskId){
   if(!confirm('Remover esta tarefa? Todo o histórico dela será perdido.')) return;
