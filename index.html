@@ -440,7 +440,8 @@ const DOW = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 const DOW_FULL = ['domingo','segunda-feira','terça-feira','quarta-feira','quinta-feira','sexta-feira','sábado'];
 
 let currentUser = null;
-let tasks = [];       // active tasks
+let tasks = [];       // active tasks (for UI)
+let allTasksEver = []; // all tasks including archived (for historical calculations)
 let entries = {};     // map "taskId|YYYY-MM-DD" -> boolean
 let editingTaskId = null;
 let weekOffset = 0;   // 0 = current week
@@ -507,9 +508,10 @@ document.getElementById('logout-btn').addEventListener('click', async ()=>{
 
 /* ============ DATA LOADING ============ */
 async function loadTasks(){
-  const { data, error } = await sb.from('tasks').select('*').eq('archived', false).order('sort_order');
+  const { data, error } = await sb.from('tasks').select('*').order('sort_order');
   if(error){ console.error(error); return; }
-  tasks = data || [];
+  allTasksEver = data || [];
+  tasks = allTasksEver.filter(t => !t.archived);
 }
 async function loadEntries(){
   // load everything (personal use scale is small) — simpler + supports full analytics
@@ -545,8 +547,9 @@ function computeDayPerf(dateStr){
   const date = new Date(dateStr+'T00:00:00');
   const weekStart = startOfWeek(date);
   let possible = 0, achieved = 0;
-  tasks.forEach(task=>{
+  allTasksEver.forEach(task=>{
     if(task.created_at.slice(0,10) > dateStr) return; // task didn't exist yet
+    if(task.archived && task.archived_at && task.archived_at.slice(0,10) <= dateStr) return; // was already archived by this date
     if(!task.weekly_goal){
       possible += task.weight;
       achieved += task.weight * taskFraction(task, dateStr);
@@ -932,13 +935,13 @@ async function moveTask(taskId, dir){
 }
 
 async function deleteTask(taskId){
-  if(!confirm('Remover esta tarefa? Todo o histórico dela será perdido.')) return;
-  const { error } = await sb.from('tasks').delete().eq('id', taskId);
+  if(!confirm('Remover esta tarefa da lista? O histórico e o desempenho de dias anteriores serão mantidos intactos.')) return;
+  const { error } = await sb.from('tasks').update({ archived: true, archived_at: new Date().toISOString() }).eq('id', taskId);
   if(error){ console.error(error); showToast('Erro ao remover'); return; }
   await loadTasks();
   renderExistingTasksList();
   renderAll();
-  showToast('Tarefa removida');
+  showToast('Tarefa removida (histórico preservado)');
 }
 
 /* ============ PWA (manifest + service worker, inline, single-file) ============ */
