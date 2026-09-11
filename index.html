@@ -233,14 +233,18 @@
     display:flex;align-items:center;gap:10px;padding:12px;
     background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:9px;
   }
-  .existing-task-row.dragging{
-    box-shadow:0 8px 24px -6px rgba(0,0,0,.5);background:var(--surface2);position:relative;
+  .order-stepper{
+    display:flex;flex-direction:column;flex-shrink:0;
+    border-radius:9px;overflow:hidden;border:1px solid var(--accent-dim);
   }
-  .drag-handle{
-    width:26px;height:36px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
-    color:var(--text-faint);cursor:grab;touch-action:none;
+  .order-stepper button{
+    width:26px;height:20px;border:none;background:var(--accent-dim);color:var(--accent-glow);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;
   }
-  .drag-handle svg{width:18px;height:18px;}
+  .order-stepper button:first-child{border-bottom:1px solid var(--bg);}
+  .order-stepper button svg{width:13px;height:13px;}
+  .order-stepper button:disabled{opacity:.25;pointer-events:none;}
+  .order-stepper button:active{background:var(--accent);color:#fff;}
   .existing-task-row .dot{width:11px;height:11px;}
   .existing-task-row .info{flex:1;min-width:0;}
   .existing-task-row .info .n{font-weight:600;font-size:14px;}
@@ -847,9 +851,10 @@ function renderExistingTasksList(){
     return;
   }
   list.innerHTML = tasks.map((t,i)=>`
-    <div class="existing-task-row" style="border-color:${t.color}66;" data-id="${t.id}" data-idx="${i}">
-      <div class="drag-handle" title="Arrastar para reordenar">
-        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+    <div class="existing-task-row" style="border-color:${t.color}66;">
+      <div class="order-stepper">
+        <button data-up="${t.id}" title="Mover para cima" ${i===0?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg></button>
+        <button data-down="${t.id}" title="Mover para baixo" ${i===tasks.length-1?'disabled':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
       </div>
       <span class="dot" style="background:${t.color}"></span>
       <div class="info">
@@ -864,7 +869,8 @@ function renderExistingTasksList(){
   `).join('');
   list.querySelectorAll('[data-edit]').forEach(b=> b.addEventListener('click', ()=> loadTaskIntoForm(b.dataset.edit)));
   list.querySelectorAll('[data-del]').forEach(b=> b.addEventListener('click', ()=> deleteTask(b.dataset.del)));
-  enableDragReorder(list);
+  list.querySelectorAll('[data-up]').forEach(b=> b.addEventListener('click', ()=> moveTask(b.dataset.up, -1)));
+  list.querySelectorAll('[data-down]').forEach(b=> b.addEventListener('click', ()=> moveTask(b.dataset.down, 1)));
 }
 
 function resetForm(){
@@ -934,53 +940,21 @@ async function persistTaskOrder(){
   await Promise.all(tasks.map((t,i)=> sb.from('tasks').update({ sort_order: i }).eq('id', t.id)));
 }
 
-function enableDragReorder(list){
-  const rows = [...list.querySelectorAll('.existing-task-row')];
-  if(rows.length < 2) return;
-  let order = rows.map(r=>r.dataset.id);
-  const rowHeight = rows[0].offsetHeight + 9; // + margin-bottom
-
-  rows.forEach(row=>{
-    const handle = row.querySelector('.drag-handle');
-    handle.addEventListener('pointerdown', (e)=>{
-      e.preventDefault();
-      handle.setPointerCapture(e.pointerId);
-      const startY = e.clientY;
-      let currentIndex = order.indexOf(row.dataset.id);
-      row.classList.add('dragging');
-      row.style.zIndex = 10;
-
-      const onMove = (ev)=>{
-        const dy = ev.clientY - startY;
-        row.style.transform = `translateY(${dy}px)`;
-        const newIndex = Math.max(0, Math.min(order.length-1, Math.round(currentIndex + dy/rowHeight)));
-        if(newIndex !== currentIndex){
-          const [movedId] = order.splice(currentIndex, 1);
-          order.splice(newIndex, 0, movedId);
-          currentIndex = newIndex;
-          rows.forEach((r, originalIdx)=>{
-            if(r === row) return;
-            const idx = order.indexOf(r.dataset.id);
-            const shift = (idx - originalIdx) * rowHeight;
-            r.style.transition = 'transform .15s ease';
-            r.style.transform = `translateY(${shift}px)`;
-          });
-        }
-      };
-      const onUp = ()=>{
-        document.removeEventListener('pointermove', onMove);
-        document.removeEventListener('pointerup', onUp);
-        row.classList.remove('dragging');
-        row.style.transform = ''; row.style.zIndex = '';
-        rows.forEach(r=>{ r.style.transform=''; r.style.transition=''; });
-        tasks = order.map(id=> tasks.find(t=>t.id===id));
-        renderExistingTasksList();
-        persistTaskOrder().then(()=>{ renderAll(); });
-      };
-      document.addEventListener('pointermove', onMove);
-      document.addEventListener('pointerup', onUp);
-    });
-  });
+async function moveTask(taskId, dir){
+  const idx = tasks.findIndex(t=>t.id===taskId);
+  const swapIdx = idx + dir;
+  if(swapIdx < 0 || swapIdx >= tasks.length) return;
+  const a = tasks[idx], b = tasks[swapIdx];
+  const aOrder = a.sort_order, bOrder = b.sort_order;
+  [tasks[idx], tasks[swapIdx]] = [tasks[swapIdx], tasks[idx]];
+  renderExistingTasksList();
+  await Promise.all([
+    sb.from('tasks').update({ sort_order: bOrder }).eq('id', a.id),
+    sb.from('tasks').update({ sort_order: aOrder }).eq('id', b.id)
+  ]);
+  await loadTasks();
+  renderExistingTasksList();
+  renderAll();
 }
 
 async function deleteTask(taskId){
