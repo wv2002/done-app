@@ -230,9 +230,18 @@
   .btn-ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
   .btn-danger-text{background:none;border:none;color:#ef4444;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;padding:8px;}
   .existing-task-row{
-    display:flex;align-items:center;gap:12px;padding:12px;
+    display:flex;align-items:center;gap:10px;padding:12px;
     background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:9px;
+    touch-action:none;
   }
+  .existing-task-row.dragging{
+    box-shadow:0 8px 24px -6px rgba(0,0,0,.5);background:var(--surface2);
+  }
+  .drag-handle{
+    width:26px;height:36px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+    color:var(--text-faint);cursor:grab;touch-action:none;
+  }
+  .drag-handle svg{width:18px;height:18px;}
   .existing-task-row .dot{width:11px;height:11px;}
   .existing-task-row .info{flex:1;min-width:0;}
   .existing-task-row .info .n{font-weight:600;font-size:14px;}
@@ -299,7 +308,7 @@
         <svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/></svg>
       </button>
       <button class="icon-btn" id="edit-btn" title="Editar tarefas">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
       </button>
       <button class="icon-btn" id="logout-btn" title="Sair">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
@@ -447,7 +456,12 @@ let editingTaskId = null;
 let weekOffset = 0;   // 0 = current week
 
 /* ============ UTIL ============ */
-function fmtDate(d){ return d.toISOString().slice(0,10); }
+function fmtDate(d){
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
 function todayStr(){ return fmtDate(new Date()); }
 function addDays(d, n){ const r = new Date(d); r.setDate(r.getDate()+n); return r; }
 function startOfWeek(d){ const r = new Date(d); r.setHours(0,0,0,0); r.setDate(r.getDate() - r.getDay()); return r; }
@@ -834,15 +848,16 @@ function renderExistingTasksList(){
     return;
   }
   list.innerHTML = tasks.map((t,i)=>`
-    <div class="existing-task-row" style="border-color:${t.color}66;">
+    <div class="existing-task-row" style="border-color:${t.color}66;" data-id="${t.id}" data-idx="${i}">
+      <div class="drag-handle" title="Arrastar para reordenar">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+      </div>
       <span class="dot" style="background:${t.color}"></span>
       <div class="info">
         <div class="n">${escapeHtml(t.name)}${t.type==='numeric' ? ' <span style="color:var(--text-faint);font-weight:500;">(numérica)</span>':''}</div>
         <div class="m">Peso ${t.weight} · ${t.weekly_goal ? t.weekly_goal+'x/semana' : 'todo dia'}</div>
       </div>
       <div class="row-actions">
-        <button data-up="${t.id}" title="Mover para cima" ${i===0?'style="opacity:.3;pointer-events:none;"':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
-        <button data-down="${t.id}" title="Mover para baixo" ${i===tasks.length-1?'style="opacity:.3;pointer-events:none;"':''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>
         <button data-edit="${t.id}" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
         <button data-del="${t.id}" title="Remover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg></button>
       </div>
@@ -850,8 +865,7 @@ function renderExistingTasksList(){
   `).join('');
   list.querySelectorAll('[data-edit]').forEach(b=> b.addEventListener('click', ()=> loadTaskIntoForm(b.dataset.edit)));
   list.querySelectorAll('[data-del]').forEach(b=> b.addEventListener('click', ()=> deleteTask(b.dataset.del)));
-  list.querySelectorAll('[data-up]').forEach(b=> b.addEventListener('click', ()=> moveTask(b.dataset.up, -1)));
-  list.querySelectorAll('[data-down]').forEach(b=> b.addEventListener('click', ()=> moveTask(b.dataset.down, 1)));
+  enableDragReorder(list);
 }
 
 function resetForm(){
@@ -917,21 +931,58 @@ document.getElementById('save-task-btn').addEventListener('click', async ()=>{
   renderAll();
 });
 
-async function moveTask(taskId, dir){
-  const idx = tasks.findIndex(t=>t.id===taskId);
-  const swapIdx = idx + dir;
-  if(swapIdx < 0 || swapIdx >= tasks.length) return;
-  const a = tasks[idx], b = tasks[swapIdx];
-  const aOrder = a.sort_order, bOrder = b.sort_order;
-  [tasks[idx], tasks[swapIdx]] = [tasks[swapIdx], tasks[idx]];
-  renderExistingTasksList();
-  await Promise.all([
-    sb.from('tasks').update({ sort_order: bOrder }).eq('id', a.id),
-    sb.from('tasks').update({ sort_order: aOrder }).eq('id', b.id)
-  ]);
-  await loadTasks();
-  renderExistingTasksList();
-  renderAll();
+async function persistTaskOrder(){
+  await Promise.all(tasks.map((t,i)=> sb.from('tasks').update({ sort_order: i }).eq('id', t.id)));
+}
+
+function enableDragReorder(list){
+  let dragEl = null, dragIdx = null, startY = 0, placeholder = null;
+
+  list.querySelectorAll('.drag-handle').forEach(handle=>{
+    handle.addEventListener('pointerdown', (e)=>{
+      e.preventDefault();
+      dragEl = handle.closest('.existing-task-row');
+      dragIdx = parseInt(dragEl.dataset.idx);
+      startY = e.clientY;
+      dragEl.classList.add('dragging');
+      dragEl.style.position = 'relative';
+      dragEl.style.zIndex = 10;
+      document.body.style.userSelect = 'none';
+
+      const onMove = (ev)=>{
+        const dy = ev.clientY - startY;
+        dragEl.style.transform = `translateY(${dy}px)`;
+        const rows = [...list.querySelectorAll('.existing-task-row')].filter(r=>r!==dragEl);
+        const dragRect = dragEl.getBoundingClientRect();
+        const dragCenter = dragRect.top + dragRect.height/2;
+        for(const row of rows){
+          const r = row.getBoundingClientRect();
+          const rowCenter = r.top + r.height/2;
+          if(dragCenter < rowCenter && row.previousElementSibling === dragEl) continue;
+          if(dragCenter > rowCenter && row.nextElementSibling === dragEl) continue;
+          if(Math.abs(dragCenter - rowCenter) < r.height/2){
+            if(dragCenter < rowCenter) list.insertBefore(dragEl, row);
+            else list.insertBefore(dragEl, row.nextSibling);
+            break;
+          }
+        }
+      };
+      const onUp = ()=>{
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        dragEl.classList.remove('dragging');
+        dragEl.style.transform = ''; dragEl.style.position=''; dragEl.style.zIndex='';
+        document.body.style.userSelect = '';
+        // reorder `tasks` array based on new DOM order
+        const newOrderIds = [...list.querySelectorAll('.existing-task-row')].map(r=>r.dataset.id);
+        tasks = newOrderIds.map(id=> tasks.find(t=>t.id===id));
+        renderExistingTasksList();
+        persistTaskOrder().then(()=>{ renderAll(); });
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+  });
 }
 
 async function deleteTask(taskId){
