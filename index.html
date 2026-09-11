@@ -232,10 +232,9 @@
   .existing-task-row{
     display:flex;align-items:center;gap:10px;padding:12px;
     background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:9px;
-    touch-action:none;
   }
   .existing-task-row.dragging{
-    box-shadow:0 8px 24px -6px rgba(0,0,0,.5);background:var(--surface2);
+    box-shadow:0 8px 24px -6px rgba(0,0,0,.5);background:var(--surface2);position:relative;
   }
   .drag-handle{
     width:26px;height:36px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
@@ -936,46 +935,45 @@ async function persistTaskOrder(){
 }
 
 function enableDragReorder(list){
-  let dragEl = null, dragIdx = null, startY = 0, placeholder = null;
+  const rows = [...list.querySelectorAll('.existing-task-row')];
+  if(rows.length < 2) return;
+  let order = rows.map(r=>r.dataset.id);
+  const rowHeight = rows[0].offsetHeight + 9; // + margin-bottom
 
-  list.querySelectorAll('.drag-handle').forEach(handle=>{
+  rows.forEach(row=>{
+    const handle = row.querySelector('.drag-handle');
     handle.addEventListener('pointerdown', (e)=>{
       e.preventDefault();
-      dragEl = handle.closest('.existing-task-row');
-      dragIdx = parseInt(dragEl.dataset.idx);
-      startY = e.clientY;
-      dragEl.classList.add('dragging');
-      dragEl.style.position = 'relative';
-      dragEl.style.zIndex = 10;
-      document.body.style.userSelect = 'none';
+      handle.setPointerCapture(e.pointerId);
+      const startY = e.clientY;
+      let currentIndex = order.indexOf(row.dataset.id);
+      row.classList.add('dragging');
+      row.style.zIndex = 10;
 
       const onMove = (ev)=>{
         const dy = ev.clientY - startY;
-        dragEl.style.transform = `translateY(${dy}px)`;
-        const rows = [...list.querySelectorAll('.existing-task-row')].filter(r=>r!==dragEl);
-        const dragRect = dragEl.getBoundingClientRect();
-        const dragCenter = dragRect.top + dragRect.height/2;
-        for(const row of rows){
-          const r = row.getBoundingClientRect();
-          const rowCenter = r.top + r.height/2;
-          if(dragCenter < rowCenter && row.previousElementSibling === dragEl) continue;
-          if(dragCenter > rowCenter && row.nextElementSibling === dragEl) continue;
-          if(Math.abs(dragCenter - rowCenter) < r.height/2){
-            if(dragCenter < rowCenter) list.insertBefore(dragEl, row);
-            else list.insertBefore(dragEl, row.nextSibling);
-            break;
-          }
+        row.style.transform = `translateY(${dy}px)`;
+        const newIndex = Math.max(0, Math.min(order.length-1, Math.round(currentIndex + dy/rowHeight)));
+        if(newIndex !== currentIndex){
+          const [movedId] = order.splice(currentIndex, 1);
+          order.splice(newIndex, 0, movedId);
+          currentIndex = newIndex;
+          rows.forEach((r, originalIdx)=>{
+            if(r === row) return;
+            const idx = order.indexOf(r.dataset.id);
+            const shift = (idx - originalIdx) * rowHeight;
+            r.style.transition = 'transform .15s ease';
+            r.style.transform = `translateY(${shift}px)`;
+          });
         }
       };
       const onUp = ()=>{
         document.removeEventListener('pointermove', onMove);
         document.removeEventListener('pointerup', onUp);
-        dragEl.classList.remove('dragging');
-        dragEl.style.transform = ''; dragEl.style.position=''; dragEl.style.zIndex='';
-        document.body.style.userSelect = '';
-        // reorder `tasks` array based on new DOM order
-        const newOrderIds = [...list.querySelectorAll('.existing-task-row')].map(r=>r.dataset.id);
-        tasks = newOrderIds.map(id=> tasks.find(t=>t.id===id));
+        row.classList.remove('dragging');
+        row.style.transform = ''; row.style.zIndex = '';
+        rows.forEach(r=>{ r.style.transform=''; r.style.transition=''; });
+        tasks = order.map(id=> tasks.find(t=>t.id===id));
         renderExistingTasksList();
         persistTaskOrder().then(()=>{ renderAll(); });
       };
